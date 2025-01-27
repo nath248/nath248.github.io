@@ -1,1 +1,1 @@
-sessionStorage.setItem("dy_salesChannel", "3");
+// sessionStorage.setItem("dy_salesChannel", "3");
