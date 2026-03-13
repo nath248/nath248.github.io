@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="preconnect" href="//cdn.dynamicyield.com" />
+    <link rel="preconnect" href="//st.dynamicyield.com" />
+    <link rel="preconnect" href="//rcom.dynamicyield.com" />
+    <link rel="dns-prefetch" href="//cdn.dynamicyield.com" />
+    <link rel="dns-prefetch" href="//st.dynamicyield.com" />
+    <link rel="dns-prefetch" href="//rcom.dynamicyield.com" />
+    <script type="text/javascript">
+      window.DY = window.DY || {};
+      DY.recommendationContext = { type: "OTHER", data: ['search'] };
+    </script>
+    <!--Page Context snippet above-->
+    <script
+      type="text/javascript"
+      src="//cdn.dynamicyield.com/api/8794544/api_dynamic.js"
+    ></script>
+    <script
+      type="text/javascript"
+      src="//cdn.dynamicyield.com/api/8794544/api_static.js"
+    ></script>
+    <!--DY Script above-->
+    <title>Products</title>
+</head>
+<body>
+    <div class="main">
+      <header>        
+        <h1>Nat's Dynamic Yield Sandbox</h1>
+          <nav>
+            <ul>
+              <li><a href="index.html">Home</a></li>
+              <li><a href="products.html">Products</a></li>
+              <li><a href="cart.html">Cart</a></li>
+    			    <li><a href="category.html">Category Page</a></li> 
+    			    <li><a href="acquisition.html">Acquisition</a></li>  
+            </ul>
+          </nav>
+        </header>
+    </div>
+    <div class="search_bar">
+      <form id="searchForm" role="search" aria-label="Site search">
+        <label class="sr_only" for="searchInput">Search products</label>
+        <input
+          id="searchInput"
+          name="q"
+          type="search"
+          placeholder="Search products…"
+          autocomplete="off"
+          aria-autocomplete="list"
+          aria-controls="searchSuggestions"
+          aria-expanded="false"
+        />
+        <button type="submit">Search</button>
+      </form>
+
+  <!-- Optional: typeahead suggestions -->
+  <ul id="searchSuggestions" class="suggestions" role="listbox" hidden></ul>
+
+  <!-- Optional: status text -->
+  <div id="searchStatus" class="search_status" aria-live="polite"></div>
+</div>
+    <div class=product_list></div>
+</body>
+</html>
