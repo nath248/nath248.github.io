@@ -1,4 +1,4 @@
-
+document.addEventListener('DOMContentLoaded', () => {
   const form = document.getElementById('searchForm');
   const input = document.getElementById('searchInput');
   const status = document.getElementById('searchStatus');
@@ -71,3 +71,4 @@
     input.setAttribute('aria-expanded', 'false');
     filterProducts(input.value);
   });
+});
