@@ -57,7 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'DY-API-Key': 'YOUR_DY_API_KEY'
+        'DY-API-Key': ${{ secrets.DY_API_KEY }}
       },
       body: JSON.stringify(payload)
     });
