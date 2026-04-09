@@ -4,24 +4,89 @@ document.addEventListener('DOMContentLoaded', () => {
   const status = document.getElementById('searchStatus');
   const suggestions = document.getElementById('searchSuggestions');
 
-  function getProductCards() {
-    return Array.from(document.querySelectorAll('.product_list .product_card'));
+  /* ---------------- Cookie helpers ---------------- */
+
+  function getCookie(name) {
+    const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+    return match ? decodeURIComponent(match[2]) : null;
   }
 
-  function filterProducts(query) {
-    const q = query.trim().toLowerCase();
-    const cards = getProductCards();
+  function getDyIdentifiers() {
+    return {
+      dyid: getCookie('dyid'),
+      dyid_server: getCookie('dyid_server'),
+      sessionDy: getCookie('dyjsession')
+    };
+  }
 
-    let shown = 0;
-    cards.forEach(card => {
-      const name = (card.getAttribute('data-name') || card.textContent || '').toLowerCase();
-      const match = !q || name.includes(q);
-      card.style.display = match ? '' : 'none';
-      if (match) shown++;
+  /* ---------------- DY Semantic Search ---------------- */
+
+  async function runDySemanticSearch(query) {
+    const { dyid, dyid_server, sessionDy } = getDyIdentifiers();
+
+    const payload = {
+      selector: { name: 'Semantic Search' },
+      context: {
+        page: {
+          type: 'OTHER',
+          data: ['search'],
+          locale: 'en_US',
+          location: window.location.href,
+          referrer: document.referrer
+        }
+      },
+      options: {
+        isImplicitClientData: false,
+        returnAnalyticsMetadata: false
+      },
+      query: {
+        text: query,
+        pagination: { numItems: 10, offset: 0 }
+      },
+      user: {
+        dyid,
+        dyid_server,
+        active_consent_accepted: true
+      },
+      session: {
+        dy: sessionDy
+      }
+    };
+
+    const response = await fetch('https://direct.dy-api.com/v2/serve/user/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'DY-API-Key': 'YOUR_DY_API_KEY'
+      },
+      body: JSON.stringify(payload)
     });
 
-    status.textContent = q ? `${shown} result(s) for “${query}”.` : '';
+    if (!response.ok) {
+      throw new Error('DY Semantic Search request failed');
+    }
+
+    return response.json();
   }
+
+  /* ---------------- Rendering ---------------- */
+
+  function renderProducts(items) {
+    const container = document.querySelector('.product_list');
+    container.innerHTML = '';
+
+    items.forEach(item => {
+      const card = document.createElement('div');
+      card.className = 'product_card';
+      card.innerHTML = `
+        <h3>${item.name || ''}</h3>
+        ${item.price ? `<p>$${item.price}</p>` : ''}
+      `;
+      container.appendChild(card);
+    });
+  }
+
+  /* ---------------- Suggestions (unchanged logic) ---------------- */
 
   function showSuggestions(items) {
     if (!items.length) {
@@ -36,24 +101,31 @@ document.addEventListener('DOMContentLoaded', () => {
     input.setAttribute('aria-expanded', 'true');
   }
 
-  // Very simple suggestions based on product_card data-name
-  function buildSuggestions(query) {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    const names = getProductCards()
-      .map(c => c.getAttribute('data-name'))
-      .filter(Boolean);
+  /* ---------------- Submit handler ---------------- */
 
-    const unique = Array.from(new Set(names));
-    return unique
-      .filter(n => n.toLowerCase().includes(q))
-      .slice(0, 6);
+  async function submitSearch(query) {
+    if (!query) return;
+
+    status.textContent = 'Searching';
+
+    try {
+      const dyResponse = await runDySemanticSearch(query);
+
+      const items = dyResponse.choices?.[0]?.variations?.[0]?.payload?.items || [];
+
+      renderProducts(items);
+      status.textContent = `${items.length} result(s) for C${query}D.`;
+    } catch (err) {
+      console.error(err);
+      status.textContent = 'Search failed. Please try again.';
+    }
   }
 
-  input.addEventListener('input', () => {
-    const s = buildSuggestions(input.value);
-    showSuggestions(s);
-    filterProducts(input.value);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    suggestions.hidden = true;
+    input.setAttribute('aria-expanded', 'false');
+    submitSearch(input.value.trim());
   });
 
   suggestions.addEventListener('click', (e) => {
@@ -62,13 +134,6 @@ document.addEventListener('DOMContentLoaded', () => {
     input.value = li.dataset.value;
     suggestions.hidden = true;
     input.setAttribute('aria-expanded', 'false');
-    filterProducts(input.value);
-  });
-
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    suggestions.hidden = true;
-    input.setAttribute('aria-expanded', 'false');
-    filterProducts(input.value);
+    submitSearch(input.value.trim());
   });
 });
