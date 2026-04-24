@@ -86,35 +86,30 @@ document.addEventListener('DOMContentLoaded', () => {
       const sku = slot?.sku ?? product?.sku ?? '';
       const name =
         product?.name ??
-        product?.title ??
-        product?.productName ??
-        product?.product_name ??
-        sku;
+        '';
 
       const price =
         product?.price ??
-        product?.itemPrice ??
-        product?.salePrice ??
-        product?.price_value ??
         null;
 
       const url =
         product?.url ??
-        product?.productUrl ??
-        product?.product_url ??
         '#';
 
       const image =
         product?.image_url ??
-        product?.imageUrl ??
-        product?.image ??
-        product?.img ??
+        '#';
+
+      const categories =
+        product?.categories ??
         '';
 
-      const meta =
-        product?.category ??
-        product?.categories ??
-        product?.brand ??
+      const keywords =
+        product?.keywords ??
+        '';
+      
+      const description =
+        product?.description ??
         '';
 
       const card = document.createElement('div');
@@ -125,12 +120,14 @@ document.addEventListener('DOMContentLoaded', () => {
       if (slot?.slotId) card.dataset.slotId = slot.slotId;
 
       card.innerHTML = `
-        ${escapeHtml(url)}
-          ${image ? `${escapeHtml(image)}" loading="lazy">` : ''}
-          <h3 class="product_title">${escapeHtml(name)}</h3>
-        </a>
-        ${meta ? `<p class="product_meta">${escapeHtml(String(meta))}</p>` : ''}
-        ${price != null ? `<p class="product_price">$${escapeHtml(String(price))}</p>` : ''}
+          <a class="product_link" href=${escapeHtml(url)} target="_blank" rel="noopener">
+            <img class="product_img" src=${escapeHtml(image)} alt=${escapeHtml(name)} loading="lazy">
+            <h3 class="product_title">${escapeHtml(name)}</h3>
+            <p class="product_meta">${escapeHtml(keywords)}</p>
+            <p class="product_price">${escapeHtml(String(price))}</p>
+            <p class="product_stock" data-in-stock="true">${escapeHtml(in_stock)}</p>
+            <p class="product_desc">${escapeHtml(description)}</p>
+          </a>
       `;
 
       resultsContainer.appendChild(card);
