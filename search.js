@@ -46,9 +46,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // Your original code uses dyid, dyid_server, dyjsession. We’ll keep those,
     // but also try the underscore versions as a fallback.
     return {
-      dyid: getCookie('dyid') || getCookie('_dyid'),
-      dyid_server: getCookie('dyid_server') || getCookie('_dyid_server'),
-      dyjsession: getCookie('dyjsession') || getCookie('_dyjsession')
+      dyid: getCookie('_dyid'),
+      dyid_server: getCookie('_dyid'),
+      dyjsession: getCookie('_dyjsession')
+      console.log(dyid, dyid_server, dyjsession)
     };
   }
 
