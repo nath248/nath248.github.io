@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const TYPE_DEBOUNCE_MS = 300;
   const MIN_QUERY_LEN = 1;
 
-  const DEFAULT_INITIAL_QUERY = 'shirt';  // initial query shown when landing
+  const DEFAULT_INITIAL_QUERY = '';  // initial query shown when landing
   const PAGE_SIZE = 12;
   const PAGE_OFFSET = 0;
 
