@@ -191,7 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'DY-API-Key': 'HIDDEN'
+        'DY-API-Key': '115d8bef0694cd3d125fb38e0ee5cba9f241403914493b144e36ddf885a4dbb9'
       },
       body: JSON.stringify(payload),
       cache: 'no-store',
