@@ -107,14 +107,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const keywords =
         product?.keywords ??
         '';
-      
-      const description =
-        product?.description ??
-        '';
-      
-      const in_stock =
-        product?.in_stock ??
-        '';
 
       const card = document.createElement('div');
       card.className = 'product_card';
@@ -129,8 +121,6 @@ document.addEventListener('DOMContentLoaded', () => {
             <h3 class="product_title">${escapeHtml(name)}</h3>
             <p class="product_meta">${escapeHtml(keywords)}</p>
             <p class="product_price">${escapeHtml(String(price))}</p>
-            <p class="product_stock" data-in-stock="true">${escapeHtml(in_stock)}</p>
-            <p class="product_desc">${escapeHtml(description)}</p>
           </a>
       `;
 
