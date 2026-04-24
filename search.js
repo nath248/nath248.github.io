@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
   // =========================================================
-  // STEP 1) Grab all required DOM elements
+  // STEP 1) Get references to the DOM elements we will use.
+  // If any are missing, stop so we don't throw errors.
   // =========================================================
   const form = document.getElementById('searchForm');
   const input = document.getElementById('searchInput');
@@ -8,25 +9,36 @@ document.addEventListener('DOMContentLoaded', () => {
   const suggestions = document.getElementById('searchSuggestions');
   const resultsContainer = document.querySelector('.product_list');
 
-  // If any required element is missing, stop safely.
-  if (!form || !input || !status || !suggestions || !resultsContainer) return;
+  if (!form || !input || !status || !suggestions || !resultsContainer) {
+    console.warn('[Search] Missing required DOM elements. Check IDs/classes in HTML.');
+    return;
+  }
 
   // =========================================================
-  // STEP 2) Configuration toggles
+  // STEP 2) Configuration (tune these without touching logic)
   // =========================================================
-  // If DY script is installed on the page (you have api_dynamic.js/api_static.js),
-  // pageviews are usually already tracked by the script, so keep this FALSE.
-  // If you are fully API-based (no DY script), set TRUE.
-  const IS_IMPLICIT_PAGEVIEW = false; 
+  // If DY script is on the page (api_dynamic.js / api_static.js), keep this false.
+  // If you're fully API-based with no script, set true.
+  const IS_IMPLICIT_PAGEVIEW = false;
 
-  // How long to wait after the last keystroke before searching:
+  // Debounce delay for "search as you type"
   const TYPE_DEBOUNCE_MS = 300;
 
-  // Optional: minimum characters before we start searching
+  // Minimum characters before we run a search from typing
   const MIN_QUERY_LEN = 1;
 
+  // Best-practice initial load:
+  // 1) Try empty query (works when experience targets empty queries / PLP approach). 
+  // 2) If empty query returns 0, fallback to a default keyword (safer because text is generally mandatory). 
+  const INITIAL_TRY_EMPTY_QUERY = true;
+  const DEFAULT_FALLBACK_QUERY = 'shirt';
+
+  // Pagination requested from DY
+  const PAGE_SIZE = 10;
+  const PAGE_OFFSET = 0;
+
   // =========================================================
-  // STEP 3) Cookie helpers for DY identifiers (dyid, dyid_server, dyjsession)
+  // STEP 3) DY cookie helpers: dyid, dyid_server, dyjsession
   // =========================================================
   function getCookie(name) {
     const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
@@ -42,7 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 4) Basic HTML escaping to safely render text
+  // STEP 4) Escape HTML to prevent accidental HTML injection
   // =========================================================
   function escapeHtml(str) {
     return String(str)
@@ -54,23 +66,24 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 5) Render results returned by DY (DY owns the product list)
-  // IMPORTANT: This assumes DY returns items with fields like name/price/url/image
-  // If your feed uses different field names, update mapping below.
+  // STEP 5) Render products into the .product_list container
+  // This assumes DY returns usable fields; if not, it still renders safely.
   // =========================================================
   function renderProducts(items) {
     resultsContainer.innerHTML = '';
 
     items.forEach(item => {
-      const name = item?.name ?? item?.title ?? '';
+      // Try common field names; you may adjust these to match your feed output
+      const name = item?.name ?? item?.title ?? item?.productName ?? '';
       const price = item?.price ?? item?.itemPrice ?? item?.salePrice ?? null;
-      const url = item?.url ?? item?.link ?? '#';
+      const url = item?.url ?? item?.link ?? item?.productUrl ?? '#';
       const image = item?.image ?? item?.imageUrl ?? item?.img ?? '';
-      const meta = item?.meta ?? item?.category ?? '';
+      const meta = item?.meta ?? item?.category ?? item?.brand ?? '';
 
       const card = document.createElement('div');
       card.className = 'product_card';
 
+      // Note: we intentionally do NOT trust these values as HTML; we escape everything.
       card.innerHTML = `
         ${escapeHtml(url)}
           ${image ? `${escapeHtml(image)}" loading="lazy">` : ''}
@@ -85,9 +98,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 6) Extract "items" safely from DY Search response
-  // The Search API returns "choices" with variations, but payload structure
-  // can differ depending on setup/template. This tries common shapes. [2](https://dy.dev/reference/search)
+  // STEP 6) Extract items from the DY response.
+  // DY response payload can vary by template/experience; we check common paths.
   // =========================================================
   function extractItemsFromDyResponse(dyResponse) {
     const choice = dyResponse?.choices?.[0];
@@ -104,14 +116,38 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 7) Run DY Semantic Search request (with request cancellation)
-  // Uses /v2/serve/user/search endpoint. [2](https://dy.dev/reference/search)
-  // Includes isImplicitPageview and device.userAgent as per guidance. [1](https://mastercard.sharepoint.com/sites/DynamicYield-All/_layouts/15/Doc.aspx?sourcedoc=%7B479D5E62-5D77-482E-AD2D-39DA0CEDED8A%7D&file=Technical%20Kickoff%20-%20Semantic%20Search_Last%20Updated%20February%202026.pptx&action=edit&mobileredirect=true&DefaultItemOpen=1)
+  // STEP 7) Logging helper: prints request + response + extracted items
+  // =========================================================
+  function logDySearch(label, payload, responseJson) {
+    console.groupCollapsed(`[DY Search] ${label}`);
+    console.log('Request payload:', payload);
+    console.log('Raw response:', responseJson);
+
+    const choice = responseJson?.choices?.[0];
+    const variation = choice?.variations?.[0];
+    const extracted = extractItemsFromDyResponse(responseJson);
+
+    console.log('choices[0].type:', choice?.type);
+    console.log('variation info:', {
+      id: variation?.id,
+      name: variation?.name
+    });
+    console.log('payload keys:', variation?.payload ? Object.keys(variation.payload) : null);
+    console.log('Extracted items count:', extracted.length);
+    console.log('Extracted items sample (first 3):', extracted.slice(0, 3));
+    console.groupEnd();
+  }
+
+  // =========================================================
+  // STEP 8) Make the Search API call.
+  // - Uses AbortController to cancel old requests when user types quickly.
+  // - Adds device.userAgent and options.isImplicitPageview per guidance. 
+  // - Adds cache: 'no-store' so browser doesn’t reuse cached results.
   // =========================================================
   let activeController = null;
 
-  async function runDySemanticSearch(query) {
-    // Cancel the previous request (if user typed again)
+  async function runDySemanticSearch(queryText, logLabel) {
+    // Cancel any previous in-flight request
     if (activeController) activeController.abort();
     activeController = new AbortController();
 
@@ -135,8 +171,8 @@ document.addEventListener('DOMContentLoaded', () => {
         isImplicitPageview: IS_IMPLICIT_PAGEVIEW
       },
       query: {
-        text: query,
-        pagination: { numItems: 10, offset: 0 }
+        text: queryText,
+        pagination: { numItems: PAGE_SIZE, offset: PAGE_OFFSET }
       },
       user: {
         dyid,
@@ -148,71 +184,106 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     };
 
-    const response = await fetch('https://direct.dy-api.com/v2/serve/user/search', {
+    const res = await fetch('https://direct.dy-api.com/v2/serve/user/search', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'DY-API-Key': '115d8bef0694cd3d125fb38e0ee5cba9f241403914493b144e36ddf885a4dbb9'
+        'DY-API-Key': 'HIDDEN'
       },
       body: JSON.stringify(payload),
       cache: 'no-store',
       signal: activeController.signal
     });
 
-    if (!response.ok) {
-      throw new Error('DY Semantic Search request failed');
+    if (!res.ok) {
+      throw new Error(`DY Search failed (HTTP ${res.status})`);
     }
 
-    return response.json();
+    const json = await res.json();
+
+    // Log everything so you can debug in DevTools
+    logDySearch(logLabel, payload, json);
+
+    return json;
   }
 
   // =========================================================
-  // STEP 8) Main search flow:
-  // - Shows "Searching…" but DOES NOT clear current results immediately
-  // - When response arrives, replaces results
-  // - Fixes the weird control characters by using normal quotes
+  // STEP 9) Execute a search and render results.
+  // - Shows "Searching..." while waiting.
+  // - Does NOT include strange control characters in status text.
+  // - Ignores AbortError (normal during fast typing).
   // =========================================================
-  async function doSearch(query) {
-    const safeQuery = query.trim();
+  async function doSearch(query, logLabelOverride) {
+    const q = query.trim();
 
-    // If query is too short, don't search
-    if (safeQuery.length < MIN_QUERY_LEN) return;
+    // For user typing, we enforce MIN_QUERY_LEN.
+    // For initial load, we may intentionally call with empty query.
+    if (q.length < MIN_QUERY_LEN && q !== '') {
+      return { ok: true, items: [], query: q };
+    }
 
-    // Show searching state (no control chars)
-    status.textContent = 'Searching…';
+    status.textContent = q ? 'Searching…' : 'Loading products…';
 
     try {
-      const dyResponse = await runDySemanticSearch(safeQuery);
+      const dyResponse = await runDySemanticSearch(q, logLabelOverride ?? `Query="${q}"`);
       const items = extractItemsFromDyResponse(dyResponse);
 
-      // Replace results only after we have the new items
       renderProducts(items);
 
-      status.textContent = `${items.length} result(s) for "${safeQuery}".`;
-    } catch (err) {
-      // If it was aborted, ignore silently (user typed again)
-      if (err.name === 'AbortError') return;
+      // Clean status message (no weird control characters)
+      if (q) status.textContent = `${items.length} result(s) for "${q}".`;
+      else status.textContent = `${items.length} product(s) loaded.`;
 
-      console.error(err);
+      return { ok: true, items, query: q };
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        // This happens when user types again quickly; ignore.
+        return { ok: false, aborted: true, items: [], query: q };
+      }
+      console.error('[DY Search] Error:', err);
       status.textContent = 'Search failed. Please try again.';
+      return { ok: false, items: [], query: q };
     }
   }
 
   // =========================================================
-  // STEP 9) Debounced "search while typing"
-  // - This is what makes tiles update as you type
-  // - It does NOT wipe the page instantly; results update after DY responds
+  // STEP 10) Best-practice initial load:
+  // 1) Try empty query first (works if your DY experience supports it / PLP approach). 
+  // 2) If 0 results, fallback to DEFAULT_FALLBACK_QUERY.
+  // =========================================================
+  async function initialLoad() {
+    status.textContent = 'Loading products…';
+
+    // Attempt #1: empty query
+    let items = [];
+    if (INITIAL_TRY_EMPTY_QUERY) {
+      const r1 = await doSearch('', 'Initial load: empty query');
+      items = r1.items || [];
+    }
+
+    // Attempt #2: fallback keyword if empty query gave 0
+    if (!items.length) {
+      await doSearch(DEFAULT_FALLBACK_QUERY, `Initial load: fallback query="${DEFAULT_FALLBACK_QUERY}"`);
+    }
+  }
+
+  // =========================================================
+  // STEP 11) "Search as you type" with debounce:
+  // - Doesn’t instantly wipe results (prevents flicker)
+  // - Cancels old requests when user keeps typing
   // =========================================================
   let debounceTimer = null;
 
   input.addEventListener('input', () => {
     const q = input.value.trim();
 
-    // Hide suggestions UI (you can keep your existing suggestions logic if you add it later)
+    // Hide suggestions UI for now (you’re not populating it yet)
     suggestions.hidden = true;
     input.setAttribute('aria-expanded', 'false');
 
-    // If query cleared, clear results + status and cancel any in-flight request
+    // If user clears the search box:
+    // - cancel any in-flight request
+    // - clear results and status
     if (!q) {
       if (activeController) activeController.abort();
       resultsContainer.innerHTML = '';
@@ -220,15 +291,19 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Debounce search calls
+    // Debounce to avoid spamming API on every keystroke
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      doSearch(q);
+      // Only run if query meets minimum length
+      if (q.length >= MIN_QUERY_LEN) {
+        doSearch(q, `Typing search: "${q}"`);
+      }
     }, TYPE_DEBOUNCE_MS);
   });
 
   // =========================================================
-  // STEP 10) Form submit still works (Enter key / button)
+  // STEP 12) Form submit (Enter key / Search button):
+  // - forces an immediate search (no debounce delay)
   // =========================================================
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -238,14 +313,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const q = input.value.trim();
     if (!q) return;
 
-    // Force immediate search on submit (no debounce delay)
     clearTimeout(debounceTimer);
-    doSearch(q);
+    doSearch(q, `Submit search: "${q}"`);
   });
 
   // =========================================================
-  // STEP 11) Optional: clicking a suggestion triggers search
-  // (Your suggestions list is empty right now, but this keeps compatibility)
+  // STEP 13) Suggestion click support (if you implement suggestions later)
   // =========================================================
   suggestions.addEventListener('click', (e) => {
     const li = e.target.closest('li[data-value]');
@@ -256,6 +329,11 @@ document.addEventListener('DOMContentLoaded', () => {
     input.setAttribute('aria-expanded', 'false');
 
     clearTimeout(debounceTimer);
-    doSearch(input.value.trim());
+    doSearch(input.value.trim(), `Suggestion click search: "${input.value.trim()}"`);
   });
+
+  // =========================================================
+  // STEP 14) Run initial load on first entry to the page
+  // =========================================================
+  initialLoad();
 });
