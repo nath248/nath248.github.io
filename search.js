@@ -16,7 +16,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // =========================================================
   // STEP 2) Config
   // =========================================================
-  const IS_IMPLICIT_PAGEVIEW = false; // DY scripts present => keep false
   const TYPE_DEBOUNCE_MS = 300;
   const MIN_QUERY_LEN = 1;
 
@@ -160,7 +159,6 @@ document.addEventListener('DOMContentLoaded', () => {
       options: {
         isImplicitClientData: false,
         returnAnalyticsMetadata: false,
-        isImplicitPageview: IS_IMPLICIT_PAGEVIEW
       },
       query: {
         text: String(queryText),
