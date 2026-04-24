@@ -49,8 +49,8 @@ document.addEventListener('DOMContentLoaded', () => {
       dyid: getCookie('_dyid'),
       dyid_server: getCookie('_dyid'),
       dyjsession: getCookie('_dyjsession')
-      console.log(dyid, dyid_server, dyjsession)
     };
+    console.log(dyid, dyid_server, dyjsession)
   }
 
   // =========================================================
