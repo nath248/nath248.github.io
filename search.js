@@ -3,8 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const input = document.getElementById('searchInput');
   const status = document.getElementById('searchStatus');
   const suggestions = document.getElementById('searchSuggestions');
-
-  /* ---------------- Cookie helpers ---------------- */
+  const RESULTS_CONTAINER_SELECTOR = '.product_list';
 
   function getCookie(name) {
     const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
@@ -19,7 +18,14 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
-  /* ---------------- DY Semantic Search ---------------- */
+  function escapeHtml(str) {
+    return String(str)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
 
   async function runDySemanticSearch(query) {
     const { dyid, dyid_server, sessionDy } = getDyIdentifiers();
@@ -33,11 +39,13 @@ document.addEventListener('DOMContentLoaded', () => {
           locale: 'en_US',
           location: window.location.href,
           referrer: document.referrer
-        }
+        },
+        device: { userAgent: navigator.userAgent }
       },
       options: {
         isImplicitClientData: false,
-        returnAnalyticsMetadata: false
+        returnAnalyticsMetadata: false,
+        isImplicitPageview: true
       },
       query: {
         text: query,
@@ -59,34 +67,32 @@ document.addEventListener('DOMContentLoaded', () => {
         'Content-Type': 'application/json',
         'DY-API-Key': '115d8bef0694cd3d125fb38e0ee5cba9f241403914493b144e36ddf885a4dbb9'
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      cache: 'no-store'
     });
 
-    if (!response.ok) {
-      throw new Error('DY Semantic Search request failed');
-    }
-
+    if (!response.ok) throw new Error('DY Semantic Search request failed');
     return response.json();
   }
 
-  /* ---------------- Rendering ---------------- */
+  function getContainer() {
+    return document.querySelector(RESULTS_CONTAINER_SELECTOR);
+  }
 
   function renderProducts(items) {
-    const container = document.querySelector('.product_list');
+    const container = getContainer();
+    if (!container) return;
     container.innerHTML = '';
 
-    items.forEach(item => {
+    (items || []).forEach(item => {
       const card = document.createElement('div');
       card.className = 'product_card';
-      card.innerHTML = `
-        <h3>${item.name || ''}</h3>
-        ${item.price ? `<p>$${item.price}</p>` : ''}
-      `;
+      const name = escapeHtml(item?.name || '');
+      const price = item?.price != null ? `<p>$${escapeHtml(String(item.price))}</p>` : '';
+      card.innerHTML = `<h3>${name}</h3>${price}`;
       container.appendChild(card);
     });
   }
-
-  /* ---------------- Suggestions (unchanged logic) ---------------- */
 
   function showSuggestions(items) {
     if (!items.length) {
@@ -95,28 +101,42 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     suggestions.innerHTML = items.map((t, i) =>
-      `<li role="option" id="sug-${i}" data-value="${t.replace(/"/g, '&quot;')}">${t}</li>`
+      `<li role="option" id="sug-${i}" data-value="${String(t).replace(/"/g, '&quot;')}">${escapeHtml(String(t))}</li>`
     ).join('');
     suggestions.hidden = false;
     input.setAttribute('aria-expanded', 'true');
   }
 
-  /* ---------------- Submit handler ---------------- */
+  function extractItemsFromDyResponse(dyResponse) {
+    const choice = dyResponse?.choices?.[0];
+    const variation = choice?.variations?.[0];
+    const items =
+      variation?.payload?.items ??
+      variation?.payload?.data?.items ??
+      variation?.payload?.products ??
+      choice?.decision?.items ??
+      [];
+    return Array.isArray(items) ? items : [];
+  }
+
+  let activeRequestToken = 0;
 
   async function submitSearch(query) {
     if (!query) return;
 
-    status.textContent = 'Searching';
+    const requestToken = ++activeRequestToken;
+    status.textContent = 'Searching…';
 
     try {
       const dyResponse = await runDySemanticSearch(query);
+      if (requestToken !== activeRequestToken) return;
 
-      const items = dyResponse.choices?.[0]?.variations?.[0]?.payload?.items || [];
-
+      const items = extractItemsFromDyResponse(dyResponse);
       renderProducts(items);
-      status.textContent = `${items.length} result(s) for C${query}D.`;
+      status.textContent = `${items.length} result(s) for "${query}".`;
     } catch (err) {
       console.error(err);
+      if (requestToken !== activeRequestToken) return;
       status.textContent = 'Search failed. Please try again.';
     }
   }
@@ -135,5 +155,23 @@ document.addEventListener('DOMContentLoaded', () => {
     suggestions.hidden = true;
     input.setAttribute('aria-expanded', 'false');
     submitSearch(input.value.trim());
+  });
+
+  let debounceTimer = null;
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+
+    if (!q) {
+      activeRequestToken++;
+      renderProducts([]);
+      status.textContent = '';
+      suggestions.hidden = true;
+      input.setAttribute('aria-expanded', 'false');
+      return;
+    }
+
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => submitSearch(q), 250);
   });
 });
