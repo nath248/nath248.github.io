@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const TYPE_DEBOUNCE_MS = 300;
   const MIN_QUERY_LEN = 1;
 
-  const DEFAULT_INITIAL_QUERY = 'Apparel';  // initial query shown when landing
+  const DEFAULT_INITIAL_QUERY = '';  // initial query shown when landing
   const PAGE_SIZE = 12;
   const PAGE_OFFSET = 0;
 
@@ -110,6 +110,10 @@ document.addEventListener('DOMContentLoaded', () => {
       
       const description =
         product?.description ??
+        '';
+      
+      const in_stock =
+        product?.in_stock ??
         '';
 
       const card = document.createElement('div');
