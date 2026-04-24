@@ -14,43 +14,43 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 2) Configuration (edit these safely)
+  // STEP 2) Config
   // =========================================================
-  // If DY scripts are installed on the page, keep this false (script tracks pageviews).
-  const IS_IMPLICIT_PAGEVIEW = false;
-
-  // Debounce time for search-as-you-type
+  const IS_IMPLICIT_PAGEVIEW = false;     // DY scripts present => keep false
   const TYPE_DEBOUNCE_MS = 300;
-
-  // Minimum characters before calling search when typing
   const MIN_QUERY_LEN = 1;
 
-  // Initial page load behavior:
-  // Use a safe default keyword query (avoids 400s from empty query setups).
-  const DEFAULT_INITIAL_QUERY = 'shirt';
-
-  // How many products to request per call
+  const DEFAULT_INITIAL_QUERY = 'shirt';  // Safe initial query (avoids empty-query issues)
   const PAGE_SIZE = 12;
   const PAGE_OFFSET = 0;
 
   // =========================================================
-  // STEP 3) Cookie helpers (DY identifiers may be null on first load)
+  // STEP 3) Cookie helpers (reads from browser cookie storage)
   // =========================================================
   function getCookie(name) {
-    const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
-    return match ? decodeURIComponent(match[2]) : null;
+    // Safer cookie parsing than regex: split document.cookie into key/value pairs
+    const all = document.cookie ? document.cookie.split('; ') : [];
+    for (const part of all) {
+      const eqIndex = part.indexOf('=');
+      if (eqIndex === -1) continue;
+      const key = part.slice(0, eqIndex);
+      const val = part.slice(eqIndex + 1);
+      if (key === name) return decodeURIComponent(val);
+    }
+    return null;
   }
 
   function getDyIdentifiers() {
-    // NOTE: Depending on implementation, cookie names can be dyid vs _dyid.
-    // Your original code uses dyid, dyid_server, dyjsession. We’ll keep those,
-    // but also try the underscore versions as a fallback.
-    return {
-      dyid: getCookie('_dyid'),
-      dyid_server: getCookie('_dyid'),
-      dyjsession: getCookie('_dyjsession')
-    };
-    console.log(dyid, dyid_server, dyjsession)
+    // Explicitly read the cookie names you said exist in your browser:
+    const dyid = getCookie('_dyid');
+    const dyjsession = getCookie('_dyjsession');
+
+    // Console log when fetched so you can confirm values are correct
+    console.log('[DY Cookies fetched]', { dyid, dyjsession });
+    // Optional extra debug if you want to see the full cookie string:
+    // console.log('[document.cookie]', document.cookie);
+
+    return { dyid, dyjsession };
   }
 
   // =========================================================
@@ -67,12 +67,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // =========================================================
   // STEP 5) Render products (DY owns the list)
-  // Adjust field mapping based on your feed/response shape.
   // =========================================================
   function renderProducts(items) {
     resultsContainer.innerHTML = '';
 
     items.forEach((item) => {
+      // Adjust mapping based on your feed/response fields
       const name = item?.name ?? item?.title ?? item?.productName ?? '';
       const price = item?.price ?? item?.itemPrice ?? item?.salePrice ?? null;
       const url = item?.url ?? item?.link ?? item?.productUrl ?? '#';
@@ -96,8 +96,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 6) Extract items from DY response
-  // Different templates can place items in different locations.
+  // STEP 6) Extract items from DY response (payload shapes vary)
   // =========================================================
   function extractItemsFromDyResponse(dyResponse) {
     const choice = dyResponse?.choices?.[0];
@@ -114,57 +113,33 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 7) Console logging (request + response + extracted items)
-  // =========================================================
-  function logDy(label, payload, responseJson) {
-    console.groupCollapsed(`[DY Search] ${label}`);
-    console.log('Identifiers (from cookies):', getDyIdentifiers());
-    console.log('Request payload:', payload);
-    console.log('Raw response:', responseJson);
-
-    const extracted = extractItemsFromDyResponse(responseJson);
-    console.log('Extracted items count:', extracted.length);
-    console.log('Extracted items sample (first 3):', extracted.slice(0, 3));
-
-    const choice = responseJson?.choices?.[0];
-    const variation = choice?.variations?.[0];
-    console.log('choices[0].type:', choice?.type);
-    console.log('variation payload keys:', variation?.payload ? Object.keys(variation.payload) : null);
-    console.groupEnd();
-  }
-
-  // =========================================================
-  // STEP 8) Build user/session objects WITHOUT nulls
-  // This prevents 400 Bad Request when dyid/dyid_server are null. [1](https://support.dynamicyield.com/hc/en-us/articles/28833403680925-Creating-Semantic-Search-Campaigns)
+  // STEP 7) Build user/session
   // =========================================================
   function buildUserAndSession() {
-    const { dyid, dyid_server, dyjsession } = getDyIdentifiers();
+    const { dyid, dyjsession } = getDyIdentifiers();
 
-    // Always include consent flag, but only include IDs if truthy
     const user = { active_consent_accepted: true };
     if (dyid) user.dyid = dyid;
-    if (dyid_server) user.dyid_server = dyid_server;
 
     const session = {};
     if (dyjsession) session.dy = dyjsession;
+
+    console.log('[DY Payload IDs]', { user, session });
 
     return { user, session };
   }
 
   // =========================================================
-  // STEP 9) Run DY Search API (with AbortController for typing)
-  // The Search API requires a Query object; we include pagination each time. [1](https://support.dynamicyield.com/hc/en-us/articles/28833403680925-Creating-Semantic-Search-Campaigns)
+  // STEP 8) Run DY Search API (AbortController cancels old calls while typing)
   // =========================================================
   let activeController = null;
 
   async function runDySemanticSearch(queryText, logLabel) {
-    // Cancel any previous request (prevents race conditions on fast typing)
     if (activeController) activeController.abort();
     activeController = new AbortController();
 
     const { user, session } = buildUserAndSession();
 
-    // Build payload
     const payload = {
       selector: { name: 'Semantic Search' },
       context: {
@@ -183,19 +158,18 @@ document.addEventListener('DOMContentLoaded', () => {
         isImplicitPageview: IS_IMPLICIT_PAGEVIEW
       },
       query: {
-        // IMPORTANT: Always send a string (avoid null/undefined)
         text: String(queryText),
         pagination: { numItems: PAGE_SIZE, offset: PAGE_OFFSET }
       },
-      user,
-      session
+      user
     };
 
-    // Also: if session is empty object, you can delete it (optional)
-    if (!Object.keys(session).length) delete payload.session;
+    // Only add session if we actually have one
+    if (Object.keys(session).length) payload.session = session;
 
-    // Debug: show payload BEFORE sending
-    console.log('[DY Search] Sending payload:', payload);
+    console.groupCollapsed(`[DY Search] ${logLabel}`);
+    console.log('Final request payload:', payload);
+    console.groupEnd();
 
     const res = await fetch('https://direct.dy-api.com/v2/serve/user/search', {
       method: 'POST',
@@ -208,7 +182,6 @@ document.addEventListener('DOMContentLoaded', () => {
       signal: activeController.signal
     });
 
-    // If 400, log response body for the exact reason (super useful)
     if (!res.ok) {
       let errBody = '';
       try { errBody = await res.text(); } catch (_) {}
@@ -218,19 +191,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const json = await res.json();
 
-    // Console logs so you can inspect it
-    logDy(logLabel, payload, json);
+    // Log response + extracted items so you can verify rendering
+    console.groupCollapsed(`[DY Search] Response: ${logLabel}`);
+    console.log('Raw response:', json);
+    const extracted = extractItemsFromDyResponse(json);
+    console.log('Extracted items count:', extracted.length);
+    console.log('Extracted items sample (first 3):', extracted.slice(0, 3));
+    console.groupEnd();
 
     return json;
   }
 
   // =========================================================
-  // STEP 10) Execute search + render
+  // STEP 9) Execute search + render
   // =========================================================
   async function doSearch(query, labelOverride) {
     const q = String(query).trim();
 
-    // Enforce minimum query length for user-typed searches
     if (q.length < MIN_QUERY_LEN) {
       return { ok: true, items: [], query: q };
     }
@@ -246,9 +223,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       return { ok: true, items, query: q };
     } catch (err) {
-      // AbortError is normal when user types again quickly
       if (err.name === 'AbortError') return { ok: false, aborted: true, items: [], query: q };
-
       console.error('[DY Search] Search error:', err);
       status.textContent = 'Search failed. Please try again.';
       return { ok: false, items: [], query: q };
@@ -256,9 +231,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 11) Best-practice initial load
-  // Load an initial product list when the user lands on the page.
-  // We avoid empty query by default to prevent 400s in many configs. [1](https://support.dynamicyield.com/hc/en-us/articles/28833403680925-Creating-Semantic-Search-Campaigns)
+  // STEP 10) Initial load (loads a list on landing)
   // =========================================================
   async function initialLoad() {
     status.textContent = 'Loading products…';
@@ -278,18 +251,16 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 12) Search-as-you-type (debounced)
+  // STEP 11) Search-as-you-type (debounced)
   // =========================================================
   let debounceTimer = null;
 
   input.addEventListener('input', () => {
     const q = input.value.trim();
 
-    // Hide suggestions (you’re not populating suggestions yet)
     suggestions.hidden = true;
     input.setAttribute('aria-expanded', 'false');
 
-    // If cleared: cancel request + clear UI
     if (!q) {
       if (activeController) activeController.abort();
       resultsContainer.innerHTML = '';
@@ -297,7 +268,6 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Debounce calls to avoid hitting API every keystroke
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       if (q.length >= MIN_QUERY_LEN) {
@@ -307,11 +277,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // =========================================================
-  // STEP 13) Submit search (Enter key / button)
+  // STEP 12) Submit search
   // =========================================================
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-
     suggestions.hidden = true;
     input.setAttribute('aria-expanded', 'false');
 
@@ -323,7 +292,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // =========================================================
-  // STEP 14) Suggestion click (optional support)
+  // STEP 13) Suggestion click (optional; list is currently empty)
   // =========================================================
   suggestions.addEventListener('click', (e) => {
     const li = e.target.closest('li[data-value]');
@@ -338,7 +307,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // =========================================================
-  // STEP 15) Kick off initial load
+  // STEP 14) Kick off initial load
   // =========================================================
   initialLoad();
 });
