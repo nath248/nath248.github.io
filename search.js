@@ -16,15 +16,16 @@ document.addEventListener('DOMContentLoaded', () => {
   // =========================================================
   // STEP 2) Config
   // =========================================================
+  const IS_IMPLICIT_PAGEVIEW = false;     // DY scripts present => keep false
   const TYPE_DEBOUNCE_MS = 300;
   const MIN_QUERY_LEN = 1;
 
-  const DEFAULT_INITIAL_QUERY = 'Apparel';
+  const DEFAULT_INITIAL_QUERY = 'shirt';  // initial query shown when landing
   const PAGE_SIZE = 12;
   const PAGE_OFFSET = 0;
 
   // =========================================================
-  // STEP 3) Cookie reader (reads from browser cookie storage)
+  // STEP 3) Cookie helpers (explicitly read from document.cookie)
   // =========================================================
   function getCookie(name) {
     const all = document.cookie ? document.cookie.split('; ') : [];
@@ -38,38 +39,19 @@ document.addEventListener('DOMContentLoaded', () => {
     return null;
   }
 
-  // =========================================================
-  // STEP 4) Fetch DY identifiers from cookies (and log them)
-  // - Uses exactly: _dyid and _dyjsession
-  // - If cookies are not available yet, fallback to window.DY values if present
-  // =========================================================
   function getDyIdentifiers() {
-    // Explicit variables as requested
-    const dyidFromCookie = getCookie('_dyid');
-    const dySessionFromCookie = getCookie('_dyjsession');
+    // Explicitly read the cookie names you confirmed exist:
+    const dyid = getCookie('_dyid');
+    const dyjsession = getCookie('_dyjsession');
 
-    // Optional fallback (helps when cookies aren't set yet at script time)
-    const dyidFromWindow = window.DY && window.DY.dyid ? String(window.DY.dyid) : null;
-    const dySessionFromWindow = window.DY && window.DY.jsession ? String(window.DY.jsession) : null;
-
-    // Choose cookie first; if missing, use window fallback
-    const dyid = dyidFromCookie || dyidFromWindow;
-    const dyjsession = dySessionFromCookie || dySessionFromWindow;
-
-    console.log('[DY Cookies fetched]', {
-      _dyid: dyidFromCookie,
-      _dyjsession: dySessionFromCookie,
-      fallback_DY_dyid: dyidFromWindow,
-      fallback_DY_jsession: dySessionFromWindow,
-      chosen_dyid: dyid,
-      chosen_dyjsession: dyjsession
-    });
+    // Console log values at fetch time (so you can verify)
+    console.log('[DY Cookies fetched]', { dyid, dyjsession });
 
     return { dyid, dyjsession };
   }
 
   // =========================================================
-  // STEP 5) Escape helper (safe rendering)
+  // STEP 4) Escape helper (safe rendering)
   // =========================================================
   function escapeHtml(str) {
     return String(str)
@@ -81,27 +63,74 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 6) Render products
+  // STEP 5) Extract products from DY response (CORRECT PATH)
+  // Based on your screenshot:
+  // choices[0].variations[0].payload.data.slots  (Array of slots)
+  // Each slot: { sku, productData, slotId }
   // =========================================================
-  function renderProducts(items) {
+  function extractSlotsFromDyResponse(dyResponse) {
+    const slots = dyResponse?.choices?.[0]?.variations?.[0]?.payload?.data?.slots;
+    return Array.isArray(slots) ? slots : [];
+  }
+
+  // =========================================================
+  // STEP 6) Render products (slots -> slot.productData)
+  // =========================================================
+  function renderProducts(slots) {
     resultsContainer.innerHTML = '';
 
-    items.forEach((item) => {
-      const name = item?.name ?? item?.title ?? item?.productName ?? '';
-      const price = item?.price ?? item?.itemPrice ?? item?.salePrice ?? null;
-      const url = item?.url ?? item?.link ?? item?.productUrl ?? '#';
-      const image = item?.image ?? item?.imageUrl ?? item?.img ?? '';
-      const meta = item?.meta ?? item?.category ?? item?.brand ?? '';
+    slots.forEach((slot) => {
+      const product = slot?.productData || {};
+
+      // Common fields; your feed may use different keys.
+      // We keep fallbacks so something renders even if the field name differs.
+      const sku = slot?.sku ?? product?.sku ?? '';
+      const name =
+        product?.name ??
+        product?.title ??
+        product?.productName ??
+        product?.product_name ??
+        sku;
+
+      const price =
+        product?.price ??
+        product?.itemPrice ??
+        product?.salePrice ??
+        product?.price_value ??
+        null;
+
+      const url =
+        product?.url ??
+        product?.productUrl ??
+        product?.product_url ??
+        '#';
+
+      const image =
+        product?.image_url ??
+        product?.imageUrl ??
+        product?.image ??
+        product?.img ??
+        '';
+
+      const meta =
+        product?.category ??
+        product?.categories ??
+        product?.brand ??
+        '';
 
       const card = document.createElement('div');
       card.className = 'product_card';
+
+      // Store identifiers on the DOM for later debugging / engagement work
+      if (sku) card.dataset.sku = sku;
+      if (slot?.slotId) card.dataset.slotId = slot.slotId;
 
       card.innerHTML = `
         ${escapeHtml(url)}
           ${image ? `${escapeHtml(image)}" loading="lazy">` : ''}
           <h3 class="product_title">${escapeHtml(name)}</h3>
         </a>
-        ${meta ? `<p class="product_meta">${escapeHtml(meta)}</p>` : ''}
+        ${meta ? `<p class="product_meta">${escapeHtml(String(meta))}</p>` : ''}
         ${price != null ? `<p class="product_price">$${escapeHtml(String(price))}</p>` : ''}
       `;
 
@@ -110,41 +139,24 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 7) Extract items from DY response (payload shapes vary)
-  // =========================================================
-  function extractItemsFromDyResponse(dyResponse) {
-    const choice = dyResponse?.choices?.[0];
-    const variation = choice?.variations?.[0];
-
-    const items =
-      variation?.payload?.items ??
-      variation?.payload?.data?.items ??
-      variation?.payload?.products ??
-      choice?.decision?.items ??
-      [];
-
-    return Array.isArray(items) ? items : [];
-  }
-
-  // =========================================================
-  // STEP 8) Build payload in EXACT format you requested
-  // - user.dyid populated from _dyid (or fallback DY.dyid)
-  // - session.dy populated from _dyjsession (or fallback DY.jsession)
-  // - dyid_server excluded
+  // STEP 7) Build payload in EXACT format you requested
+  // user.dyid populated from _dyid cookie
+  // session.dy populated from _dyjsession cookie
+  // dyid_server excluded
   // =========================================================
   function buildPayload(queryText) {
     const { dyid, dyjsession } = getDyIdentifiers();
 
-    // IMPORTANT: You requested dyid and session "need to be defined" in the payload.
-    // So we always include user + session objects, even if values are missing.
-    // But note: if they are empty, DY may reject; the console log will show it.
+    // You said these need to be defined in the payload.
+    // We populate from cookies; if missing, we still define keys (empty string)
+    // and log a warning so you can see why.
+    if (!dyid || !dyjsession) {
+      console.warn('[DY Cookies] Missing cookie values. Payload will include empty strings.', { dyid, dyjsession });
+    }
+
     const payload = {
-      user: {
-        dyid: dyid ? String(dyid) : ''
-      },
-      session: {
-        dy: dyjsession ? String(dyjsession) : ''
-      },
+      user: { dyid: dyid ? String(dyid) : '' },
+      session: { dy: dyjsession ? String(dyjsession) : '' },
       selector: { name: 'Semantic Search' },
       context: {
         page: {
@@ -159,6 +171,7 @@ document.addEventListener('DOMContentLoaded', () => {
       options: {
         isImplicitClientData: false,
         returnAnalyticsMetadata: false,
+        isImplicitPageview: IS_IMPLICIT_PAGEVIEW
       },
       query: {
         text: String(queryText),
@@ -166,12 +179,12 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     };
 
-    console.log('[DY Final Payload]', payload);
+    console.log('[DY Payload built]', payload);
     return payload;
   }
 
   // =========================================================
-  // STEP 9) Call DY Search API (AbortController for fast typing)
+  // STEP 8) Run DY Search API (AbortController cancels old calls while typing)
   // =========================================================
   let activeController = null;
 
@@ -182,7 +195,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const payload = buildPayload(queryText);
 
     console.groupCollapsed(`[DY Search] ${logLabel}`);
-    console.log('Sending payload:', payload);
+    console.log('Final request payload:', payload);
     console.groupEnd();
 
     const res = await fetch('https://direct.dy-api.com/v2/serve/user/search', {
@@ -207,44 +220,45 @@ document.addEventListener('DOMContentLoaded', () => {
 
     console.groupCollapsed(`[DY Search] Response: ${logLabel}`);
     console.log('Raw response:', json);
-    const extracted = extractItemsFromDyResponse(json);
-    console.log('Extracted items count:', extracted.length);
-    console.log('Extracted items sample (first 3):', extracted.slice(0, 3));
+
+    const slots = extractSlotsFromDyResponse(json);
+    console.log('Extracted slots count:', slots.length);
+    console.log('Extracted slots sample (first 3):', slots.slice(0, 3));
     console.groupEnd();
 
     return json;
   }
 
   // =========================================================
-  // STEP 10) Execute search + render
+  // STEP 9) Execute search + render
   // =========================================================
   async function doSearch(query, labelOverride) {
     const q = String(query).trim();
 
     if (q.length < MIN_QUERY_LEN) {
-      return { ok: true, items: [], query: q };
+      return { ok: true, slots: [], query: q };
     }
 
     status.textContent = 'Searching…';
 
     try {
       const dyResponse = await runDySemanticSearch(q, labelOverride ?? `Query="${q}"`);
-      const items = extractItemsFromDyResponse(dyResponse);
+      const slots = extractSlotsFromDyResponse(dyResponse);
 
-      renderProducts(items);
-      status.textContent = `${items.length} result(s) for "${q}".`;
+      renderProducts(slots);
+      status.textContent = `${slots.length} result(s) for "${q}".`;
 
-      return { ok: true, items, query: q };
+      return { ok: true, slots, query: q };
     } catch (err) {
-      if (err.name === 'AbortError') return { ok: false, aborted: true, items: [], query: q };
+      if (err.name === 'AbortError') return { ok: false, aborted: true, slots: [], query: q };
       console.error('[DY Search] Search error:', err);
       status.textContent = 'Search failed. Please try again.';
-      return { ok: false, items: [], query: q };
+      return { ok: false, slots: [], query: q };
     }
   }
 
   // =========================================================
-  // STEP 11) Initial load (loads a list on landing)
+  // STEP 10) Initial load (loads a list on landing)
   // =========================================================
   async function initialLoad() {
     status.textContent = 'Loading products…';
@@ -252,10 +266,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       const dyResponse = await runDySemanticSearch(q, `Initial load: "${q}"`);
-      const items = extractItemsFromDyResponse(dyResponse);
+      const slots = extractSlotsFromDyResponse(dyResponse);
 
-      renderProducts(items);
-      status.textContent = `${items.length} product(s) loaded.`;
+      renderProducts(slots);
+      status.textContent = `${slots.length} product(s) loaded.`;
     } catch (err) {
       if (err.name === 'AbortError') return;
       console.error('[DY Search] Initial load failed:', err);
@@ -264,7 +278,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 12) Search-as-you-type (debounced)
+  // STEP 11) Search-as-you-type (debounced)
   // =========================================================
   let debounceTimer = null;
 
@@ -290,7 +304,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // =========================================================
-  // STEP 13) Submit search
+  // STEP 12) Submit search
   // =========================================================
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -305,7 +319,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // =========================================================
-  // STEP 14) Suggestion click (optional)
+  // STEP 13) Suggestion click (optional; list is currently empty)
   // =========================================================
   suggestions.addEventListener('click', (e) => {
     const li = e.target.closest('li[data-value]');
@@ -320,7 +334,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // =========================================================
-  // STEP 15) Kick off initial load
+  // STEP 14) Kick off initial load
   // =========================================================
   initialLoad();
 });
