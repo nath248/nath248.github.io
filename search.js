@@ -16,19 +16,18 @@ document.addEventListener('DOMContentLoaded', () => {
   // =========================================================
   // STEP 2) Config
   // =========================================================
-  const IS_IMPLICIT_PAGEVIEW = false;     // DY scripts present => keep false
+  const IS_IMPLICIT_PAGEVIEW = false; // DY scripts present => keep false
   const TYPE_DEBOUNCE_MS = 300;
   const MIN_QUERY_LEN = 1;
 
-  const DEFAULT_INITIAL_QUERY = 'shirt';  // Safe initial query (avoids empty-query issues)
+  const DEFAULT_INITIAL_QUERY = 'shirt';
   const PAGE_SIZE = 12;
   const PAGE_OFFSET = 0;
 
   // =========================================================
-  // STEP 3) Cookie helpers (reads from browser cookie storage)
+  // STEP 3) Cookie reader (reads from browser cookie storage)
   // =========================================================
   function getCookie(name) {
-    // Safer cookie parsing than regex: split document.cookie into key/value pairs
     const all = document.cookie ? document.cookie.split('; ') : [];
     for (const part of all) {
       const eqIndex = part.indexOf('=');
@@ -40,21 +39,38 @@ document.addEventListener('DOMContentLoaded', () => {
     return null;
   }
 
+  // =========================================================
+  // STEP 4) Fetch DY identifiers from cookies (and log them)
+  // - Uses exactly: _dyid and _dyjsession
+  // - If cookies are not available yet, fallback to window.DY values if present
+  // =========================================================
   function getDyIdentifiers() {
-    // Explicitly read the cookie names you said exist in your browser:
-    const dyid = getCookie('_dyid');
-    const dyjsession = getCookie('_dyjsession');
+    // Explicit variables as requested
+    const dyidFromCookie = getCookie('_dyid');
+    const dySessionFromCookie = getCookie('_dyjsession');
 
-    // Console log when fetched so you can confirm values are correct
-    console.log('[DY Cookies fetched]', { dyid, dyjsession });
-    // Optional extra debug if you want to see the full cookie string:
-    // console.log('[document.cookie]', document.cookie);
+    // Optional fallback (helps when cookies aren't set yet at script time)
+    const dyidFromWindow = window.DY && window.DY.dyid ? String(window.DY.dyid) : null;
+    const dySessionFromWindow = window.DY && window.DY.jsession ? String(window.DY.jsession) : null;
+
+    // Choose cookie first; if missing, use window fallback
+    const dyid = dyidFromCookie || dyidFromWindow;
+    const dyjsession = dySessionFromCookie || dySessionFromWindow;
+
+    console.log('[DY Cookies fetched]', {
+      _dyid: dyidFromCookie,
+      _dyjsession: dySessionFromCookie,
+      fallback_DY_dyid: dyidFromWindow,
+      fallback_DY_jsession: dySessionFromWindow,
+      chosen_dyid: dyid,
+      chosen_dyjsession: dyjsession
+    });
 
     return { dyid, dyjsession };
   }
 
   // =========================================================
-  // STEP 4) Escape helper (safe rendering)
+  // STEP 5) Escape helper (safe rendering)
   // =========================================================
   function escapeHtml(str) {
     return String(str)
@@ -66,13 +82,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 5) Render products (DY owns the list)
+  // STEP 6) Render products
   // =========================================================
   function renderProducts(items) {
     resultsContainer.innerHTML = '';
 
     items.forEach((item) => {
-      // Adjust mapping based on your feed/response fields
       const name = item?.name ?? item?.title ?? item?.productName ?? '';
       const price = item?.price ?? item?.itemPrice ?? item?.salePrice ?? null;
       const url = item?.url ?? item?.link ?? item?.productUrl ?? '#';
@@ -96,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 6) Extract items from DY response (payload shapes vary)
+  // STEP 7) Extract items from DY response (payload shapes vary)
   // =========================================================
   function extractItemsFromDyResponse(dyResponse) {
     const choice = dyResponse?.choices?.[0];
@@ -113,34 +128,24 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 7) Build user/session
+  // STEP 8) Build payload in EXACT format you requested
+  // - user.dyid populated from _dyid (or fallback DY.dyid)
+  // - session.dy populated from _dyjsession (or fallback DY.jsession)
+  // - dyid_server excluded
   // =========================================================
-  function buildUserAndSession() {
+  function buildPayload(queryText) {
     const { dyid, dyjsession } = getDyIdentifiers();
 
-    const user = { active_consent_accepted: true };
-    if (dyid) user.dyid = dyid;
-
-    const session = {};
-    if (dyjsession) session.dy = dyjsession;
-
-    console.log('[DY Payload IDs]', { user, session });
-
-    return { user, session };
-  }
-
-  // =========================================================
-  // STEP 8) Run DY Search API (AbortController cancels old calls while typing)
-  // =========================================================
-  let activeController = null;
-
-  async function runDySemanticSearch(queryText, logLabel) {
-    if (activeController) activeController.abort();
-    activeController = new AbortController();
-
-    const { user, session } = buildUserAndSession();
-
+    // IMPORTANT: You requested dyid and session "need to be defined" in the payload.
+    // So we always include user + session objects, even if values are missing.
+    // But note: if they are empty, DY may reject; the console log will show it.
     const payload = {
+      user: {
+        dyid: dyid ? String(dyid) : ''
+      },
+      session: {
+        dy: dyjsession ? String(dyjsession) : ''
+      },
       selector: { name: 'Semantic Search' },
       context: {
         page: {
@@ -160,15 +165,26 @@ document.addEventListener('DOMContentLoaded', () => {
       query: {
         text: String(queryText),
         pagination: { numItems: PAGE_SIZE, offset: PAGE_OFFSET }
-      },
-      user
+      }
     };
 
-    // Only add session if we actually have one
-    if (Object.keys(session).length) payload.session = session;
+    console.log('[DY Final Payload]', payload);
+    return payload;
+  }
+
+  // =========================================================
+  // STEP 9) Call DY Search API (AbortController for fast typing)
+  // =========================================================
+  let activeController = null;
+
+  async function runDySemanticSearch(queryText, logLabel) {
+    if (activeController) activeController.abort();
+    activeController = new AbortController();
+
+    const payload = buildPayload(queryText);
 
     console.groupCollapsed(`[DY Search] ${logLabel}`);
-    console.log('Final request payload:', payload);
+    console.log('Sending payload:', payload);
     console.groupEnd();
 
     const res = await fetch('https://direct.dy-api.com/v2/serve/user/search', {
@@ -191,7 +207,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const json = await res.json();
 
-    // Log response + extracted items so you can verify rendering
     console.groupCollapsed(`[DY Search] Response: ${logLabel}`);
     console.log('Raw response:', json);
     const extracted = extractItemsFromDyResponse(json);
@@ -203,7 +218,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 9) Execute search + render
+  // STEP 10) Execute search + render
   // =========================================================
   async function doSearch(query, labelOverride) {
     const q = String(query).trim();
@@ -231,7 +246,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 10) Initial load (loads a list on landing)
+  // STEP 11) Initial load (loads a list on landing)
   // =========================================================
   async function initialLoad() {
     status.textContent = 'Loading products…';
@@ -251,7 +266,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // =========================================================
-  // STEP 11) Search-as-you-type (debounced)
+  // STEP 12) Search-as-you-type (debounced)
   // =========================================================
   let debounceTimer = null;
 
@@ -277,7 +292,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // =========================================================
-  // STEP 12) Submit search
+  // STEP 13) Submit search
   // =========================================================
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -292,7 +307,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // =========================================================
-  // STEP 13) Suggestion click (optional; list is currently empty)
+  // STEP 14) Suggestion click (optional)
   // =========================================================
   suggestions.addEventListener('click', (e) => {
     const li = e.target.closest('li[data-value]');
@@ -307,7 +322,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // =========================================================
-  // STEP 14) Kick off initial load
+  // STEP 15) Kick off initial load
   // =========================================================
   initialLoad();
 });
